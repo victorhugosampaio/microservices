@@ -1,0 +1,329 @@
+# Imports
+import tkinter as tk
+from tkinter import ttk, messagebox
+from PIL import Image, ImageTk
+import os
+import requests
+from io import BytesIO
+
+# Tabela querry
+(id INT PRIMARY KEY,nome VARCHAR(255),descricao TEXT,foto VARCHAR(255),preco DECIMAL(7, 2))
+
+# Código próprio
+def adicionar_produto(id, nome, descricao, preco, foto):
+    db = connect_catalog()
+    cursor = db.cursor()
+    cursor.execute("""
+        INSERT INTO catalog (id, nome, descricao, foto, preco)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (id, nome, descricao, foto, preco))
+    db.commit()
+    db.close()
+
+def listar_produtos():
+    db = connect_catalog()
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM catalog")
+    produtos = cursor.fetchall()
+    db.close()
+    return produtos
+
+def editar_produto(id, nome, descricao, preco, foto):
+    db = connect_catalog()
+    cursor = db.cursor()
+    cursor.execute("""
+        UPDATE catalog SET nome=%s, descricao=%s, foto=%s, preco=%s
+        WHERE id=%s
+    """, (nome, descricao, foto, preco, id))
+    db.commit()
+    db.close()
+
+def remover_produto(id):
+    db = connect_catalog()
+    cursor = db.cursor()
+    cursor.execute("DELETE FROM catalog WHERE id=%s", (id,))
+    db.commit()
+    db.close()
+
+class catalog_app:
+    def __init__(self, root):
+        self.root = root
+        self.produtos = []
+        self.selected_id = None
+        self.foto_add = ""
+        self.foto_edit = ""
+        self.quantidades = {}
+
+        self.notebook = ttk.Notebook(self.root)
+        self.frame_catalogo = ttk.Frame(self.notebook)
+        self.frame_adicionar = ttk.Frame(self.notebook)
+        self.frame_editar = ttk.Frame(self.notebook)
+        self.frame_remover = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.frame_catalogo, text="Catálogo")
+        self.notebook.add(self.frame_adicionar, text="Adicionar")
+        self.notebook.add(self.frame_editar, text="Editar")
+        self.notebook.add(self.frame_remover, text="Remover")
+        self.notebook.pack(fill="both", expand=True)
+
+        self.notebook.bind("<<NotebookTabChanged>>", self.limpar_campos)
+
+        self.configurar_interface()
+        self.listar_produtos()
+
+    def configurar_interface(self):
+        self.lista_catalogo = tk.Listbox(self.frame_catalogo, width=50)
+        self.lista_catalogo.grid(row=0, column=0, padx=10, pady=10, rowspan=6)
+        self.lista_catalogo.bind('<<ListboxSelect>>', self.exibir_produto)
+
+        self.canvas_imagem = tk.Canvas(self.frame_catalogo, width=150, height=150)
+        self.canvas_imagem.grid(row=0, column=1, padx=10, pady=5)
+
+        self.label_descricao = ttk.Label(self.frame_catalogo, text="", wraplength=200, justify="left")
+        self.label_descricao.grid(row=1, column=1, padx=10, sticky="nw")
+
+        self.label_qtd = ttk.Label(self.frame_catalogo, text="Quantidade:")
+        self.label_qtd.grid(row=2, column=1, sticky="w", padx=10)
+        self.label_qtd.grid_remove()
+
+        self.qtd_envio = tk.Spinbox(self.frame_catalogo, from_=0, to=100, width=5)
+        self.qtd_envio.grid(row=3, column=1, sticky="w", padx=10)
+        self.qtd_envio.grid_remove()
+
+        ttk.Button(self.frame_catalogo, text="Enviar Itens para o Carrinho", command=self.enviar_para_carrinho).grid(row=6, column=0, pady=10, sticky="w")
+
+        ttk.Label(self.frame_adicionar, text="ID").grid(row=0, column=0, sticky="w")
+        self.id_add = ttk.Entry(self.frame_adicionar)
+        self.id_add.grid(row=0, column=1, sticky="w")
+
+        ttk.Label(self.frame_adicionar, text="Nome").grid(row=1, column=0, sticky="w")
+        self.nome_add = ttk.Entry(self.frame_adicionar)
+        self.nome_add.grid(row=1, column=1)
+
+        ttk.Label(self.frame_adicionar, text="Descrição").grid(row=2, column=0, sticky="w")
+        self.desc_add = ttk.Entry(self.frame_adicionar)
+        self.desc_add.grid(row=2, column=1)
+
+        ttk.Label(self.frame_adicionar, text="Preço").grid(row=3, column=0, sticky="w")
+        self.preco_add = ttk.Entry(self.frame_adicionar)
+        self.preco_add.grid(row=3, column=1)
+
+        ttk.Label(self.frame_adicionar, text="URL da Imagem").grid(row=4, column=0, sticky="w")
+        self.url_add = ttk.Entry(self.frame_adicionar)
+        self.url_add.grid(row=4, column=1)
+
+        ttk.Button(self.frame_adicionar, text="Adicionar", command=self.adicionar_produto).grid(row=5, column=0, columnspan=2, sticky="w")
+
+        self.lista_editar = tk.Listbox(self.frame_editar, width=50)
+        self.lista_editar.grid(row=0, column=0, columnspan=2)
+        self.lista_editar.bind('<<ListboxSelect>>', self.preparar_edicao)
+
+        ttk.Label(self.frame_editar, text="Nome").grid(row=1, column=0, sticky="w")
+        self.nome_edit = ttk.Entry(self.frame_editar)
+        self.nome_edit.grid(row=1, column=1)
+
+        ttk.Label(self.frame_editar, text="Descrição").grid(row=2, column=0, sticky="w")
+        self.desc_edit = ttk.Entry(self.frame_editar)
+        self.desc_edit.grid(row=2, column=1)
+
+        ttk.Label(self.frame_editar, text="Preço").grid(row=3, column=0, sticky="w")
+        self.preco_edit = ttk.Entry(self.frame_editar)
+        self.preco_edit.grid(row=3, column=1)
+
+        ttk.Label(self.frame_editar, text="URL da Imagem").grid(row=4, column=0, sticky="w")
+        self.url_edit = ttk.Entry(self.frame_editar)
+        self.url_edit.grid(row=4, column=1)
+
+        ttk.Button(self.frame_editar, text="Salvar Alterações", command=self.salvar_edicao).grid(row=5, column=0, columnspan=2, sticky="w")
+
+        self.lista_remover = tk.Listbox(self.frame_remover, width=50)
+        self.lista_remover.grid(row=0, column=0)
+        self.lista_remover.bind('<<ListboxSelect>>', self.selecionar_para_remover)
+        ttk.Button(self.frame_remover, text="Remover", command=self.remover_produto).grid(row=1, column=0, sticky="w")
+
+    def adicionar_produto(self):
+        try:
+            id = int(self.id_add.get())
+            nome = self.nome_add.get()
+            descricao = self.desc_add.get()
+            preco = float(self.preco_add.get())
+            foto_url = self.url_add.get()
+            if nome and descricao and foto_url:
+                self.foto_add = foto_url
+                adicionar_produto(id, nome, descricao, preco, self.foto_add)
+                self.listar_produtos()
+                messagebox.showinfo("Sucesso", "Produto adicionado")
+        except Exception as e:
+            messagebox.showerror("Erro", str(e))
+
+    def listar_produtos(self):
+        self.produtos = listar_produtos()
+        self.lista_catalogo.delete(0, tk.END)
+        self.lista_editar.delete(0, tk.END)
+        self.lista_remover.delete(0, tk.END)
+
+        for p in self.produtos:
+            self.quantidades[p[0]] = 0
+            self.lista_catalogo.insert(tk.END, p[1])
+            self.lista_editar.insert(tk.END, p[1])
+            self.lista_remover.insert(tk.END, p[1])
+
+    def exibir_produto(self, event):
+        try:
+            idx = self.lista_catalogo.curselection()
+            if not idx:
+                return
+
+            if self.selected_id is not None:
+                try:
+                    qtd_atual = int(self.qtd_envio.get())
+                    self.quantidades[self.selected_id] = qtd_atual
+                except ValueError:
+                    pass
+
+            produto = self.produtos[idx[0]]
+            self.selected_id = produto[0]
+
+            preco = float(produto[4])
+            descricao = produto[2]
+            self.label_descricao.config(
+                text=f"ID: {produto[0]}\n{descricao}\nPreço: R${preco:.2f}"
+            )
+
+            foto_url = produto[3]
+            self.canvas_imagem.delete("all")
+
+            if foto_url:
+                try:
+                    response = requests.get(foto_url)
+                    image_data = response.content
+                    img = Image.open(BytesIO(image_data))
+                    img = img.resize((150, 150))
+                    img_tk = ImageTk.PhotoImage(img)
+                    self.canvas_imagem.create_image(75, 75, image=img_tk)
+                    self.canvas_imagem.image = img_tk
+                except Exception as e:
+                    self.canvas_imagem.create_text(75, 75, text="Erro ao carregar imagem", fill="black")
+            else:
+                self.canvas_imagem.create_text(75, 75, text="Sem imagem", fill="black")
+
+            self.label_qtd.grid()
+            self.qtd_envio.grid()
+            self.qtd_envio.delete(0, tk.END)
+            self.qtd_envio.insert(0, self.quantidades.get(produto[0], 0))
+        except Exception as e:
+            print(f"Erro ao exibir produto: {e}")
+
+    def enviar_para_carrinho(self):
+        try:
+            if self.selected_id:
+                try:
+                    qtd = int(self.qtd_envio.get())
+                    self.quantidades[self.selected_id] = qtd
+                except ValueError:
+                    messagebox.showerror("Erro", "Informe uma quantidade válida")
+                    return
+
+            itens = [f"{pid}:{qtd}" for pid, qtd in self.quantidades.items() if qtd > 0]
+
+            if not itens:
+                messagebox.showwarning("Vazio", "Nenhum item com quantidade definida.")
+                return
+
+            dados = {"produtos": ",".join(itens)}
+            url = 'http://localhost:{cart_port}/cart'
+            response = requests.post(url, data=dados)
+
+            if response.status_code == 200:
+                messagebox.showinfo("Sucesso", "Carrinho atualizado com sucesso!")
+            else:
+                messagebox.showerror("Erro", f"Erro ao atualizar o carrinho: {response.status_code}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao enviar itens: {e}")
+
+    def preparar_edicao(self, event):
+        try:
+            idx = self.lista_editar.curselection()
+            if not idx:
+                return
+            produto = self.produtos[idx[0]]
+            self.selected_id = produto[0]
+            self.nome_edit.delete(0, tk.END)
+            self.nome_edit.insert(0, produto[1])
+            self.desc_edit.delete(0, tk.END)
+            self.desc_edit.insert(0, produto[2])
+            self.preco_edit.delete(0, tk.END)
+            self.preco_edit.insert(0, produto[4])
+            self.url_edit.delete(0, tk.END)
+            self.url_edit.insert(0, produto[3])
+        except Exception as e:
+            print(f"Erro ao preparar edição: {e}")
+
+    def salvar_edicao(self):
+        try:
+            nome = self.nome_edit.get()
+            descricao = self.desc_edit.get()
+            preco = float(self.preco_edit.get())
+            foto_url = self.url_edit.get()
+            editar_produto(self.selected_id, nome, descricao, preco, foto_url)
+            self.listar_produtos()
+            messagebox.showinfo("Sucesso", "Produto editado com sucesso!")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao editar produto: {e}")
+
+    def selecionar_para_remover(self, event):
+        idx = self.lista_remover.curselection()
+        if idx:
+            self.selected_id = self.produtos[idx[0]][0]
+
+    def remover_produto(self):
+        try:
+            idx = self.lista_remover.curselection()
+            if not idx:
+                return
+            produto = self.produtos[idx[0]]
+            remover_produto(produto[0])
+            self.listar_produtos()
+            messagebox.showinfo("Remover", "Produto removido com sucesso!")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao remover produto: {e}")
+
+    def limpar_campos(self, event):
+        if self.notebook.index(self.notebook.select()) == 1:
+            self.id_add.delete(0, tk.END)
+            self.nome_add.delete(0, tk.END)
+            self.desc_add.delete(0, tk.END)
+            self.preco_add.delete(0, tk.END)
+            self.url_add.delete(0, tk.END)
+            self.foto_add = ""
+        elif self.notebook.index(self.notebook.select()) == 2:
+            self.nome_edit.delete(0, tk.END)
+            self.desc_edit.delete(0, tk.END)
+            self.preco_edit.delete(0, tk.END)
+            self.url_edit.delete(0, tk.END)
+            self.foto_edit = ""
+        elif self.notebook.index(self.notebook.select()) == 3:
+            self.lista_remover.selection_clear(0, tk.END)
+
+# Serviço
+from flask import Flask, jsonify
+from catalog import connect_catalog
+
+app = Flask(__name__)
+
+@app.route("/produto/<int:produto_id>", methods=["GET"])
+def get_produto(produto_id):
+    print(f"SOLICITADO {produto_id}")
+    db = connect_catalog()
+    cursor = db.cursor()
+    cursor.execute("SELECT nome, preco FROM catalog WHERE id = %s", (produto_id,))
+    resultado = cursor.fetchone()
+    db.close()
+
+    if resultado:
+        nome, preco = resultado
+        print(f"ENVIADO: nome={nome}, preco={preco}")
+        return jsonify({"nome": nome, "preco": float(preco)})
+    else:
+        print(f"PRODUTO {produto_id} NÃO ENCONTRADO")
+        return jsonify({"erro": "Produto não encontrado"}), 404

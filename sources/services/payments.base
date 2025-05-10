@@ -1,0 +1,236 @@
+# Imports
+import tkinter as tk
+from tkinter import ttk, messagebox
+import requests
+
+# Tabela querry
+(id VARCHAR(255) PRIMARY KEY,valor INT NOT NULL)
+
+# Código próprio
+def adicionar_pagamento(id, valor):
+    db = connect_payments()
+    cursor = db.cursor()
+    cursor.execute("INSERT INTO payments (id, valor) VALUES (%s, %s)", (id, valor))
+    db.commit()
+    db.close()
+
+def atualizar_pagamento(id, novo_valor):
+    db = connect_payments()
+    cursor = db.cursor()
+    cursor.execute("UPDATE payments SET valor = %s WHERE id = %s", (novo_valor, id))
+    db.commit()
+    db.close()
+
+def remover_pagamento(id):
+    db = connect_payments()
+    cursor = db.cursor()
+    cursor.execute("DELETE FROM payments WHERE id = %s", (id,))
+    db.commit()
+    db.close()
+
+def listar_pagamentos():
+    db = connect_payments()
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM payments")
+    resultados = cursor.fetchall()
+    db.close()
+    return resultados
+
+def ler_valor_total():
+    try:
+        response = requests.get("http://localhost:{payments_port}/valor_total")
+        if response.status_code == 200:
+            return float(response.json()["valor_total"])
+        else:
+            return 0.0
+    except:
+        return 0.0
+
+class payments_app:
+    def __init__(self, root):
+        self.root = root
+        self.total = ler_valor_total()
+
+        self.notebook = ttk.Notebook(self.root)
+        self.frame_lista = ttk.Frame(self.notebook)
+        self.frame_adicionar = ttk.Frame(self.notebook)
+        self.frame_editar = ttk.Frame(self.notebook)
+        self.frame_remover = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.frame_lista, text="Pagamentos")
+        self.notebook.add(self.frame_adicionar, text="Adicionar")
+        self.notebook.add(self.frame_editar, text="Editar")
+        self.notebook.add(self.frame_remover, text="Remover")
+        self.notebook.pack(fill="both", expand=True)
+
+        self.configurar_abas()
+        self.atualizar_lista_pagamentos()
+
+    def configurar_abas(self):
+        self.label_valor_total = ttk.Label(self.frame_lista, text=f"Total: R$ {self.total:.2f}", anchor="w")
+        self.label_valor_total.grid(row=0, column=0, padx=10, pady=10, sticky="w")
+
+        self.lista_pagamentos = tk.Listbox(self.frame_lista, width=50)
+        self.lista_pagamentos.grid(row=1, column=0, rowspan=5, padx=10, pady=10)
+        self.lista_pagamentos.bind("<<ListboxSelect>>", self.selecionar_pagamento)
+
+        largura_botoes = 18
+
+        ttk.Button(self.frame_lista, text="Atualizar Valor", width=largura_botoes, command=self.atualizar_valor).grid(row=2, column=1, pady=(5, 2))
+        ttk.Button(self.frame_lista, text="Definir Pagamento", width=largura_botoes, command=self.finalizar_compra).grid(row=3, column=1, pady=(2, 5))
+
+        ttk.Label(self.frame_adicionar, text="Método de Pagamento").grid(row=0, column=0, sticky="w")
+        self.id_add = ttk.Entry(self.frame_adicionar, width=40)
+        self.id_add.grid(row=0, column=1)
+
+        ttk.Label(self.frame_adicionar, text="Número").grid(row=1, column=0, sticky="w")
+        self.numero_add = ttk.Entry(self.frame_adicionar, width=40)
+        self.numero_add.grid(row=1, column=1)
+
+        ttk.Button(self.frame_adicionar, text="Adicionar", command=self.adicionar_pagamento).grid(row=2, column=0, columnspan=2, sticky="w")
+
+        self.lista_editar = tk.Listbox(self.frame_editar, width=50)
+        self.lista_editar.grid(row=0, column=0, columnspan=2)
+        self.lista_editar.bind("<<ListboxSelect>>", self.preparar_edicao)
+
+        ttk.Label(self.frame_editar, text="Método de Pagamento").grid(row=1, column=0)
+        self.id_editar = ttk.Entry(self.frame_editar, width=40)
+        self.id_editar.grid(row=1, column=1)
+
+        ttk.Label(self.frame_editar, text="Novo Número").grid(row=2, column=0, sticky="w")
+        self.numero_editar = ttk.Entry(self.frame_editar, width=40)
+        self.numero_editar.grid(row=2, column=1)
+
+        ttk.Button(self.frame_editar, text="Editar", command=self.editar_pagamento).grid(row=3, column=0, columnspan=2, sticky="w")
+
+        ttk.Label(self.frame_remover, text="Selecione o Método de Pagamento para Remover").grid(row=0, column=0, padx=10, pady=10)
+
+        self.lista_remover = tk.Listbox(self.frame_remover, width=50)
+        self.lista_remover.grid(row=1, column=0, padx=10, pady=10)
+        self.lista_remover.bind("<<ListboxSelect>>", self.selecionar_pagamento_remover)
+
+        ttk.Button(self.frame_remover, text="Remover", command=self.remover_pagamento).grid(row=2, column=0, pady=10, sticky="w")
+
+    def atualizar_lista_pagamentos(self):
+        self.pagamentos = listar_pagamentos()
+        self.lista_pagamentos.delete(0, tk.END)
+        self.lista_remover.delete(0, tk.END)
+        self.lista_editar.delete(0, tk.END)
+
+        for p in self.pagamentos:
+            display = f"{p[0]} - {p[1]}"
+            self.lista_pagamentos.insert(tk.END, display)
+            self.lista_remover.insert(tk.END, display)
+            self.lista_editar.insert(tk.END, display)
+
+    def selecionar_pagamento(self, event):
+        try:
+            idx = self.lista_pagamentos.curselection()
+            if idx:
+                self.selecionado = self.pagamentos[idx[0]]
+        except:
+            pass
+
+    def selecionar_pagamento_remover(self, event):
+        try:
+            idx = self.lista_remover.curselection()
+            if idx:
+                self.selecionado_remover = self.pagamentos[idx[0]]
+        except:
+            pass
+
+    def preparar_edicao(self, event):
+        try:
+            idx = self.lista_editar.curselection()
+            if idx:
+                selecionado = self.pagamentos[idx[0]]
+                self.id_editar.delete(0, tk.END)
+                self.numero_editar.delete(0, tk.END)
+                self.id_editar.insert(0, selecionado[0])
+                self.numero_editar.insert(0, selecionado[1])
+        except:
+            pass
+
+    def adicionar_pagamento(self):
+        id = self.id_add.get()
+        numero = self.numero_add.get()
+
+        if id and numero:
+            adicionar_pagamento(id, numero)
+            self.atualizar_lista_pagamentos()
+            messagebox.showinfo("Sucesso", "Pagamento Adicionado!")
+        else:
+            messagebox.showwarning("Erro", "Por favor, preencha todos os campos.")
+
+    def editar_pagamento(self):
+        id = self.id_editar.get()
+        numero = self.numero_editar.get()
+
+        if id and numero:
+            atualizar_pagamento(id, numero)
+            self.atualizar_lista_pagamentos()
+            messagebox.showinfo("Sucesso", "Pagamento Editado!")
+        else:
+            messagebox.showwarning("Erro", "Por favor, preencha todos os campos.")
+
+    def remover_pagamento(self):
+        if hasattr(self, 'selecionado_remover'):
+            id = self.selecionado_remover[0]
+            remover_pagamento(id)
+            self.atualizar_lista_pagamentos()
+            messagebox.showinfo("Sucesso", "Pagamento Removido!")
+        else:
+            messagebox.showwarning("Erro", "Por favor, selecione um pagamento para remover.")
+
+    def atualizar_valor(self):
+        self.total = ler_valor_total()
+        self.label_valor_total.config(text=f"Total: R$ {self.total:.2f}")
+
+    def finalizar_compra(self):
+        if hasattr(self, 'selecionado'):
+            dados = {
+                "metodo": self.selecionado[0],
+                "valor_metodo": self.selecionado[1],
+                "valor_total": self.total
+            }
+
+            try:
+                response = requests.post("http://localhost:{purchase_port}/finalizar_compra", json=dados)
+                if response.status_code == 200:
+                    messagebox.showinfo("Pagamento Definido", f"Método de pagamento definido com {dados['metodo']} ({dados['valor_metodo']}).")
+                else:
+                    erro = response.json().get("erro", "Erro desconhecido")
+                    messagebox.showerror("Erro", f"Erro ao definir o método de pagamento: {erro}")
+            except Exception as e:
+                messagebox.showerror("Erro", f"Falha na comunicação: {e}")
+        else:
+            messagebox.showwarning("Seleção", "Selecione um método de pagamento.")
+
+# Serviço
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+valor_total = 0
+
+@app.route("/receber_pagamento", methods=["POST"])
+def receber_valor_pagamento():
+    global valor_total
+    try:
+        data = request.get_json()
+        valor_total = data.get("valor_total")
+
+        if valor_total is None:
+            return jsonify({"erro": "Valor total ausente"}), 400
+
+        print(f"RECEBIDO VALOR: {valor_total:.2f}")
+        return jsonify({"mensagem": f"Valor total recebido: R${valor_total:.2f}"}), 200
+
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route("/valor_total", methods=["GET"])
+def obter_valor_total():
+    global valor_total
+    print(f"ENVIADO VALOR: {valor_total}")
+    return jsonify({"valor_total": valor_total})

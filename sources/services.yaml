@@ -1,0 +1,28 @@
+db_config:
+  host: localhost
+  user: root
+  password: ""
+
+catalog:
+  bd: catalog
+  port: 5001
+
+cart:
+  bd: cart
+  port: 5002
+
+shipping:
+  bd: shipping
+  port: 5003
+
+payments:
+  bd: payments
+  port: 5004
+
+purchase:
+  bd: purchase
+  port: 5005
+
+user:
+  bd: user
+  port: 5006

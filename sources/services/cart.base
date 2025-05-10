@@ -1,0 +1,207 @@
+# Imports
+import tkinter as tk
+from tkinter import ttk, messagebox
+import requests
+
+# Tabela querry
+(id INT PRIMARY KEY AUTO_INCREMENT,itens TEXT)
+
+# Código próprio
+def adicionar_carrinho(itens):
+    db = connect_cart()
+    cursor = db.cursor()
+    cursor.execute("INSERT INTO cart (itens) VALUES (%s)", (itens,))
+    db.commit()
+    db.close()
+
+def excluir_carrinho(carrinho_id):
+    db = connect_cart()
+    cursor = db.cursor()
+    cursor.execute("DELETE FROM cart WHERE id = %s", (carrinho_id,))
+    db.commit()
+    db.close()
+
+def listar_carrinhos():
+    db = connect_cart()
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM cart")
+    carrinhos = cursor.fetchall()
+    db.close()
+    return carrinhos
+
+def buscar_produto_por_id(produto_id):
+    try:
+        response = requests.get(f"http://localhost:{catalog_port}/produto/{produto_id}")
+        if response.status_code == 200:
+            return response.json()['nome'], response.json()['preco']
+        else:
+            return None
+    except Exception as e:
+        print(f"Erro ao buscar produto: {e}")
+        return None
+
+class cart_app:
+    def __init__(self, root):
+        self.root = root
+        self.carrinhos = []
+
+        self.notebook = ttk.Notebook(self.root)
+        self.frame_carrinho = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.frame_carrinho, text="Carrinhos")
+        self.notebook.pack(fill="both", expand=True)
+
+        self.configurar_interface()
+        self.listar_carrinhos()
+
+    def configurar_interface(self):
+        self.frame_carrinho.columnconfigure(0, weight=1)
+        self.frame_carrinho.columnconfigure(1, weight=0)
+
+        self.lista_carrinhos = tk.Listbox(self.frame_carrinho, width=50)
+        self.lista_carrinhos.grid(row=0, column=0, padx=(10, 5), pady=10, sticky="n")
+
+        botoes_frame = ttk.Frame(self.frame_carrinho)
+        botoes_frame.grid(row=0, column=1, padx=(5, 10), pady=10, sticky="n")
+
+        largura_botoes = 20
+
+        ttk.Button(botoes_frame, text="Exibir Carrinho", width=largura_botoes, command=self.exibir_carrinho).grid(row=0, column=0, pady=1, sticky="w")
+        ttk.Button(botoes_frame, text="Atualizar Carrinhos", width=largura_botoes, command=self.listar_carrinhos).grid(row=1, column=0, pady=1, sticky="w")
+        ttk.Button(botoes_frame, text="Excluir Carrinho", width=largura_botoes, command=self.excluir_carrinho).grid(row=2, column=0, pady=1, sticky="w")
+        ttk.Button(botoes_frame, text="Ir para Frete", width=largura_botoes, command=self.enviar_para_frete).grid(row=3, column=0, pady=1, sticky="w")
+
+    def listar_carrinhos(self):
+        self.carrinhos = listar_carrinhos()
+        self.lista_carrinhos.delete(0, tk.END)
+
+        for carrinho in self.carrinhos:
+            self.lista_carrinhos.insert(tk.END, f"Carrinho {carrinho[0]}")
+
+    def exibir_carrinho(self):
+        try:
+            idx = self.lista_carrinhos.curselection()
+            if not idx:
+                return
+
+            carrinho = self.carrinhos[idx[0]]
+            itens_str = carrinho[1]
+            itens = itens_str.split(',')
+
+            detalhes_itens = []
+            total_geral = 0.0
+            total_itens = 0
+
+            for item in itens:
+                produto_id, qtd = item.split(':')
+                produto = buscar_produto_por_id(produto_id)
+                if produto:
+                    nome, preco = produto
+                    total = float(preco) * int(qtd)
+                    total_geral += total
+                    total_itens += int(qtd)
+                    detalhes_itens.append(
+                        f"{nome} - Quantidade: {qtd} - Preço unitário: R${preco:.2f} - Total: R${total:.2f}")
+
+            detalhes_itens.append(f"Quantidade de itens: {total_itens} - Valor Total: R${total_geral:.2f}")
+
+            self.mostrar_itens(detalhes_itens)
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao exibir carrinho: {e}")
+
+    def excluir_carrinho(self):
+        try:
+            idx = self.lista_carrinhos.curselection()
+            if not idx:
+                messagebox.showwarning("Atenção", "Selecione um carrinho para excluir.")
+                return
+
+            carrinho_id = self.carrinhos[idx[0]][0]
+
+            confirmacao = messagebox.askyesno("Confirmar Exclusão", f"Tem certeza que deseja excluir o Carrinho {carrinho_id}?")
+            if confirmacao:
+                excluir_carrinho(carrinho_id)
+                self.listar_carrinhos()
+                messagebox.showinfo("Sucesso", f"Carrinho {carrinho_id} excluído com sucesso.")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao excluir carrinho: {e}")
+
+    def mostrar_itens(self, detalhes_itens):
+        janela_itens = tk.Toplevel(self.root)
+        janela_itens.title("Detalhes do Carrinho")
+
+        for idx, item in enumerate(detalhes_itens):
+            tk.Label(janela_itens, text=item).grid(row=idx, column=0, padx=10, pady=5)
+
+        ttk.Button(janela_itens, text="Fechar", command=janela_itens.destroy).grid(row=len(detalhes_itens), column=0, pady=10)
+
+    def adicionar_carrinho(self, itens):
+        try:
+            adicionar_carrinho(itens)
+            self.listar_carrinhos()
+            messagebox.showinfo("Sucesso", "Carrinho adicionado com sucesso!")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao adicionar carrinho: {e}")
+
+    def enviar_para_frete(self):
+        try:
+            idx = self.lista_carrinhos.curselection()
+            if not idx:
+                messagebox.showwarning("Atenção", "Selecione um carrinho para enviar ao frete.")
+                return
+
+            carrinho = self.carrinhos[idx[0]]
+            itens_str = carrinho[1]
+            itens = itens_str.split(',')
+
+            total_geral = 0.0
+
+            for item in itens:
+                produto_id, qtd = item.split(':')
+                produto = buscar_produto_por_id(produto_id)
+                if produto:
+                    _, preco = produto
+                    total = float(preco) * int(qtd)
+                    total_geral += total
+
+            if total_geral <= 0:
+                messagebox.showerror("Erro", "Não foi possível calcular o valor. Verifique a conexão com o serviço de Catálogo.")
+                return
+
+            response = requests.post("http://localhost:{shipping_port}/receber_valor_carrinho",
+                                     json={"valor_carrinho": total_geral})
+
+            if response.status_code == 200:
+                messagebox.showinfo("Enviado", f"Valor do carrinho (R${total_geral:.2f}) enviado ao frete com sucesso.")
+            else:
+                messagebox.showerror("Erro", f"Erro ao enviar para frete: {response.text}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao processar envio para frete: {e}")
+
+# Serviço
+from flask import Flask, request
+from cart import connect_cart
+
+app = Flask(__name__)
+
+@app.route("/cart", methods=["GET", "POST"])
+def save_cart():
+    if request.method == "POST":
+        produtos_str = request.form.get("produtos")
+        if not produtos_str:
+            return "Nenhum produto enviado!", 400
+
+        try:
+            produtos = produtos_str
+        except Exception as e:
+            return f"Erro ao processar a string: {str(e)}", 400
+
+        db = connect_cart()
+        cursor = db.cursor()
+        cursor.execute("INSERT INTO cart (itens) VALUES (%s)", (produtos,))
+        db.commit()
+        db.close()
+
+        print(f"RECEBIDO {produtos}")
+        return "Carrinho atualizado com sucesso!", 200
+    return None

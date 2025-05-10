@@ -1,0 +1,134 @@
+# Imports
+import tkinter as tk
+from tkinter import ttk, messagebox
+import requests
+
+# Tabela querry
+(id INT PRIMARY KEY AUTO_INCREMENT,metodo TEXT,valor_metodo INT,valor_total DECIMAL(7, 2),usuario TEXT)
+
+# Código próprio
+def inserir_compra(metodo, valor_metodo, valor_total, usuario):
+    db = connect_purchase()
+    cursor = db.cursor()
+    cursor.execute("INSERT INTO purchase (metodo, valor_metodo, valor_total, usuario) VALUES (%s, %s, %s, %s)",
+                   (metodo, valor_metodo, valor_total, usuario))
+    db.commit()
+    db.close()
+
+
+def ler_dados_pagamento():
+    try:
+        response = requests.get("http://localhost:5005/dados_pagamento")
+        if response.status_code == 200:
+            data = response.json()
+            metodo = data.get("metodo", "")
+            valor_metodo = int(data.get("valor_metodo", 0))
+            valor_total = float(data.get("valor_total", 0.0))
+            return (metodo, valor_metodo, valor_total)
+        else:
+            return ("", 0, 0.0)
+    except:
+        return ("", 0, 0.0)
+
+class purchase_app:
+    def __init__(self, root):
+        self.root = root
+
+        self.notebook = ttk.Notebook(self.root)
+        self.frame_lista = ttk.Frame(self.notebook)
+        self.notebook.add(self.frame_lista, text="Finalizar")
+        self.notebook.pack(fill="both", expand=True)
+
+        self.configurar_abas()
+        self.atualizar_dados_recebidos()
+
+    def configurar_abas(self):
+        self.label_metodo = ttk.Label(self.frame_lista, text="Método: ")
+        self.label_metodo.grid(row=0, column=0, padx=10, pady=5, sticky="w")
+
+        self.label_valor_metodo = ttk.Label(self.frame_lista, text="Identificador: ")
+        self.label_valor_metodo.grid(row=1, column=0, padx=10, pady=5, sticky="w")
+
+        self.label_valor = ttk.Label(self.frame_lista, text="Total: R$ 0.00")
+        self.label_valor.grid(row=2, column=0, padx=10, pady=5, sticky="w")
+
+        ttk.Label(self.frame_lista, text="Usuário (opcional):").grid(row=3, column=0, padx=10, pady=5, sticky="w")
+        self.entry_usuario = ttk.Entry(self.frame_lista, width=30)
+        self.entry_usuario.grid(row=4, column=0, padx=10, pady=5, sticky="w")
+
+        largura_botoes = 17
+
+        ttk.Button(self.frame_lista, text="Atualizar Dados", width=largura_botoes, command=self.atualizar_dados_recebidos).grid(row=5, column=0, padx=10, pady=5, sticky="w")
+        ttk.Button(self.frame_lista, text="Finalizar Compra", width=largura_botoes, command=self.finalizar_compra).grid(row=6, column=0, padx=10, pady=6, sticky="w")
+
+    def atualizar_dados_recebidos(self):
+        global metodo_pagamento, valor_metodo_pagamento, valor_total
+        metodo_pagamento, valor_metodo_pagamento, valor_total = ler_dados_pagamento()
+
+        self.label_metodo.config(text=f"Método: {metodo_pagamento}")
+        self.label_valor_metodo.config(text=f"Identificador: {valor_metodo_pagamento}")
+        self.label_valor.config(text=f"Total: R$ {valor_total:.2f}")
+
+    def finalizar_compra(self):
+        try:
+            metodo_pagamento, numero_pagamento, valor_total = ler_dados_pagamento()
+
+            if not metodo_pagamento or not numero_pagamento or valor_total is None:
+                raise ValueError("Dados incompletos")
+
+            usuario = self.entry_usuario.get().strip()
+            if not usuario:
+                usuario = "<vazio>"
+
+            inserir_compra(metodo_pagamento, numero_pagamento, float(valor_total), usuario)
+            if not usuario:
+                messagebox.showinfo("Compra Finalizada", f"Compra de R$ {valor_total:.2f} registrada com sucesso!")
+            else:
+                messagebox.showinfo("Compra Finalizada", f"Compra de R$ {valor_total:.2f} registrada com sucesso em nome de {usuario}!")
+                if "user" in opcionais:
+                    try:
+                        response = requests.post("http://localhost:{user_port}/pay_user", json={"nome": usuario, "valor": float(valor_total)})
+                        if response.status_code != 200:
+                            messagebox.showerror("Erro", f"Erro ao enviar gasto para o usuario {usuario}: {response.text}")
+                    except Exception as ex:
+                        messagebox.showerror("Erro", f"Erro de conexão com serviço de usuário: {str(ex)}")
+
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao finalizar a compra: {str(e)}")
+
+# Serviço
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+metodo_pagamento = ""
+valor_metodo_pagamento = 0
+valor_total = 0.0
+
+@app.route("/finalizar_compra", methods=["POST"])
+def finalizar_compra():
+    global metodo_pagamento, valor_metodo_pagamento, valor_total
+    try:
+        data = request.get_json()
+        metodo_pagamento = data.get("metodo")
+        valor_metodo_pagamento = int(data.get("valor_metodo", 0))
+        valor_total = float(data.get("valor_total", 0.0))
+
+        if not metodo_pagamento or valor_metodo_pagamento == 0 or valor_total == 0:
+            return jsonify({"erro": "Dados incompletos"}), 400
+
+        print(f"RECEBIDO - Método: {metodo_pagamento}, Valor Método: {valor_metodo_pagamento}, Valor Total: {valor_total}")
+        return jsonify({"mensagem": "Dados de pagamento recebidos com sucesso!"}), 200
+
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/dados_pagamento", methods=["GET"])
+def obter_dados_pagamento():
+    global metodo_pagamento, valor_metodo_pagamento, valor_total
+    return jsonify({
+        "metodo": metodo_pagamento,
+        "valor_metodo": valor_metodo_pagamento,
+        "valor_total": valor_total
+    })

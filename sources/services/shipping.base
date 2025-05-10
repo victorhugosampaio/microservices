@@ -1,0 +1,206 @@
+# Imports
+import tkinter as tk
+from tkinter import messagebox, ttk
+import requests
+
+# Tabela querry
+(id VARCHAR(255) PRIMARY KEY,valor INT NOT NULL)
+
+# Código próprio
+def listar_enderecos():
+    db = connect_shipping()
+    cursor = db.cursor()
+    cursor.execute("SELECT id, valor FROM shipping")
+    enderecos = cursor.fetchall()
+    db.close()
+    return enderecos
+
+def excluir_endereco(endereco):
+    db = connect_shipping()
+    cursor = db.cursor()
+    cursor.execute("DELETE FROM shipping WHERE id = %s", (endereco,))
+    db.commit()
+    db.close()
+
+def adicionar_endereco(endereco, valor):
+    db = connect_shipping()
+    cursor = db.cursor()
+    cursor.execute("INSERT INTO shipping (id, valor) VALUES (%s, %s)", (endereco, valor))
+    db.commit()
+    db.close()
+
+import requests
+
+def ler_valor_carrinho():
+    try:
+        response = requests.get("http://localhost:{shipping_port}/valor_carrinho")
+        if response.status_code == 200:
+            return float(response.json()["valor_carrinho"])
+        else:
+            return 0.0
+    except:
+        return 0.0
+
+
+class shipping_app:
+    def __init__(self, root):
+        self.root = root
+        self.enderecos = []
+        self.valor_carrinho = ler_valor_carrinho()
+        self.endereco_selecionado = None
+
+        self.notebook = ttk.Notebook(self.root)
+        self.frame_lista = ttk.Frame(self.notebook)
+        self.frame_adicionar = ttk.Frame(self.notebook)
+        self.frame_remover = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.frame_lista, text="Endereços")
+        self.notebook.add(self.frame_adicionar, text="Adicionar")
+        self.notebook.add(self.frame_remover, text="Remover")
+        self.notebook.pack(fill="both", expand=True)
+
+        self.notebook.bind("<<NotebookTabChanged>>", self.limpar_campos)
+
+        self.configurar_abas()
+        self.atualizar_listas()
+
+    def configurar_abas(self):
+        self.lista_enderecos = tk.Listbox(self.frame_lista, width=50)
+        self.lista_enderecos.grid(row=0, column=0, rowspan=5, padx=10, pady=10)
+        self.lista_enderecos.bind("<<ListboxSelect>>", self.selecionar_endereco)
+
+        self.label_valor_carrinho = ttk.Label(self.frame_lista, text=f"Valor do Carrinho: R$ {self.valor_carrinho:.2f}")
+        self.label_valor_carrinho.grid(row=0, column=1, sticky="w")
+
+        self.label_valor_frete = ttk.Label(self.frame_lista, text="Valor do Frete: R$ 0.00")
+        self.label_valor_frete.grid(row=1, column=1, sticky="w")
+
+        self.label_valor_total = ttk.Label(self.frame_lista, text="Total: R$ 0.00")
+        self.label_valor_total.grid(row=2, column=1, sticky="w")
+
+        largura_botoes = 26
+
+        ttk.Button(self.frame_lista, text="Atualizar Valor do Carrinho", width=largura_botoes, command=self.atualizar_valor_carrinho).grid(row=3, column=1, pady=(5, 1), sticky="w")
+        ttk.Button(self.frame_lista, text="Ir para pagamento", width=largura_botoes, command=self.enviar_pagamento).grid(row=4, column=1, pady=(0, 5), sticky="w")
+
+        ttk.Label(self.frame_adicionar, text="Endereço").grid(row=0, column=0)
+        self.endereco_add = ttk.Entry(self.frame_adicionar, width=40)
+        self.endereco_add.grid(row=0, column=1)
+
+        ttk.Button(self.frame_adicionar, text="Adicionar", command=self.adicionar_endereco).grid(row=1, column=0, columnspan=2, sticky="w")
+
+        self.lista_remover = tk.Listbox(self.frame_remover, width=50)
+        self.lista_remover.grid(row=0, column=0)
+        self.lista_remover.bind("<<ListboxSelect>>", self.selecionar_para_remover)
+
+        ttk.Button(self.frame_remover, text="Remover", command=self.remover_endereco).grid(row=1, column=0, sticky="w")
+
+    def atualizar_listas(self):
+        self.enderecos = listar_enderecos()
+        self.lista_enderecos.delete(0, tk.END)
+        self.lista_remover.delete(0, tk.END)
+
+        for e in self.enderecos:
+            self.lista_enderecos.insert(tk.END, f"{e[0]} - R${e[1]:.2f}")
+            self.lista_remover.insert(tk.END, e[0])
+
+    def selecionar_endereco(self, event):
+        try:
+            idx = self.lista_enderecos.curselection()
+            if idx:
+                self.endereco_selecionado = self.enderecos[idx[0]][0]
+                self.atualizar_valor_frete()
+        except:
+            pass
+
+    def atualizar_valor_frete(self):
+        if not self.endereco_selecionado:
+            return
+        for e in self.enderecos:
+            if e[0] == self.endereco_selecionado:
+                frete = e[1]
+                total = self.valor_carrinho + frete
+                self.label_valor_frete.config(text=f"Valor do Frete: R$ {frete:.2f}")
+                self.label_valor_total.config(text=f"Total: R$ {total:.2f}")
+                break
+
+    def atualizar_valor_carrinho(self):
+        self.valor_carrinho = ler_valor_carrinho()
+        self.label_valor_carrinho.config(text=f"Valor do Carrinho: R$ {self.valor_carrinho:.2f}")
+        self.atualizar_valor_frete()
+
+    def enviar_pagamento(self):
+        if not self.endereco_selecionado:
+            messagebox.showwarning("Selecione", "Selecione um endereço para enviar.")
+            return
+        for e in self.enderecos:
+            if e[0] == self.endereco_selecionado:
+                total = self.valor_carrinho + e[1]
+                try:
+                    response = requests.post("http://localhost:{payments_port}/receber_pagamento", json={"valor_total": total})
+                    if response.status_code == 200:
+                        messagebox.showinfo("Enviado", f"Pagamento enviado: R$ {total:.2f}")
+                    else:
+                        messagebox.showerror("Erro", f"Erro ao enviar pagamento: {response.text}")
+                except Exception as ex:
+                    messagebox.showerror("Erro", f"Erro de conexão: {str(ex)}")
+                break
+
+    def adicionar_endereco(self):
+        endereco = self.endereco_add.get()
+        if endereco:
+            valor = sum(
+                ord(c.lower()) - 96
+                for c in endereco
+                if c.isalpha()
+            )
+            adicionar_endereco(endereco, valor / 2)
+            self.atualizar_listas()
+            messagebox.showinfo("Sucesso", "Endereço adicionado!")
+
+    def selecionar_para_remover(self, event):
+        idx = self.lista_remover.curselection()
+        if idx:
+            self.endereco_selecionado = self.enderecos[idx[0]][0]
+
+    def remover_endereco(self):
+        if self.endereco_selecionado:
+            excluir_endereco(self.endereco_selecionado)
+            self.atualizar_listas()
+            messagebox.showinfo("Removido", "Endereço removido!")
+
+    def limpar_campos(self, event):
+        aba = self.notebook.index(self.notebook.select())
+        if aba == 1:
+            self.endereco_add.delete(0, tk.END)
+        elif aba == 2:
+            self.lista_remover.selection_clear(0, tk.END)
+
+# Serviço
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+valor_carrinho = 0
+
+@app.route("/receber_valor_carrinho", methods=["POST"])
+def receber_valor_carrinho():
+    global valor_carrinho
+    try:
+        data = request.get_json()
+        valor_carrinho = data.get("valor_carrinho")
+
+        if valor_carrinho is None:
+            return jsonify({"erro": "Valor do carrinho ausente"}), 400
+
+        print(f"RECEBIDO VALOR: {valor_carrinho:.2f}")
+        return jsonify({"mensagem": f"Valor do carrinho recebido: R${valor_carrinho:.2f}"}), 200
+
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route("/valor_carrinho", methods=["GET"])
+def obter_valor_carrinho():
+    global valor_carrinho
+    print(f"ENVIADO VALOR: {valor_carrinho}")
+    return jsonify({"valor_carrinho": valor_carrinho})

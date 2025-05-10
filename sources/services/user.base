@@ -1,0 +1,142 @@
+# Imports
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+# Tabela querry
+(nome VARCHAR(100) PRIMARY KEY, gasto_total DECIMAL(7, 2))
+
+# Código próprio
+def ver_gastos(nome):
+    db = connect_user()
+    cursor = db.cursor()
+    cursor.execute("SELECT gasto_total FROM user WHERE nome = %s", (nome,))
+    resultado = cursor.fetchone()
+    db.close()
+    return resultado[0] if resultado else 0.0
+
+def atualizar_gastos(nome, valor):
+    db = connect_user()
+    cursor = db.cursor()
+    cursor.execute("SELECT gasto_total FROM user WHERE nome = %s", (nome,))
+    resultado = cursor.fetchone()
+
+    if resultado is None:
+        cursor.execute("INSERT INTO user (nome, gasto_total) VALUES (%s, %s)", (nome, valor))
+    else:
+        valor_total = float(resultado[0]) + float(valor)
+        cursor.execute("UPDATE user SET gasto_total = %s WHERE nome = %s", (valor_total, nome))
+
+    db.commit()
+    db.close()
+
+def remover_usuario(nome):
+    db = connect_user()
+    cursor = db.cursor()
+    cursor.execute("DELETE FROM user WHERE nome = %s", (nome,))
+    db.commit()
+    db.close()
+
+def listar_usuarios():
+    db = connect_user()
+    cursor = db.cursor()
+    cursor.execute("SELECT nome FROM user")
+    nomes = [row[0] for row in cursor.fetchall()]
+    db.close()
+    return nomes
+
+class user_app:
+    def __init__(self, root):
+        self.root = root
+        self.notebook = ttk.Notebook(self.root)
+        self.frame_buscar = ttk.Frame(self.notebook)
+        self.frame_usuarios = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.frame_buscar, text="Buscar")
+        self.notebook.add(self.frame_usuarios, text="Usuários")
+        self.notebook.pack(fill="both", expand=True)
+
+        self.configurar_aba_buscar()
+        self.configurar_aba_usuarios()
+
+    def configurar_aba_buscar(self):
+        ttk.Label(self.frame_buscar, text="Nome do Usuário:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
+
+        self.entry_nome = ttk.Entry(self.frame_buscar, width=30)
+        self.entry_nome.grid(row=1, column=0, padx=10, pady=5, sticky="w")
+
+        self.label_resultado = ttk.Label(self.frame_buscar, text="Gasto Total: R$ 0.00")
+        self.label_resultado.grid(row=2, column=0, padx=10, pady=10, sticky="w")
+
+        ttk.Button(self.frame_buscar, text="Buscar Usuário", command=self.buscar_usuario).grid(row=3, column=0, padx=10, pady=5, sticky="w")
+
+    def configurar_aba_usuarios(self):
+        self.lista_usuarios = tk.Listbox(self.frame_usuarios, height=10, width=40)
+        self.lista_usuarios.grid(row=0, column=0, columnspan=2, padx=10, pady=10)
+
+        botoes_frame = ttk.Frame(self.frame_usuarios)
+        botoes_frame.grid(row=1, column=0, columnspan=2, padx=10, pady=5)
+
+        ttk.Button(botoes_frame, text="Remover", width=18, command=self.remover_usuario_selecionado).grid(row=0, column=0, padx=5)
+        ttk.Button(botoes_frame, text="Atualizar Usuários", width=18, command=self.atualizar_lista_usuarios).grid(row=0, column=1, padx=5)
+
+        self.atualizar_lista_usuarios()
+
+    def buscar_usuario(self):
+        nome = self.entry_nome.get().strip()
+        if not nome:
+            messagebox.showwarning("Aviso", "Digite o nome do usuário.")
+            return
+
+        try:
+            total = ver_gastos(nome)
+            self.label_resultado.config(text=f"Gasto Total: R$ {total:.2f}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao buscar usuário: {str(e)}")
+
+    def atualizar_lista_usuarios(self):
+        self.lista_usuarios.delete(0, tk.END)
+        try:
+            usuarios = listar_usuarios()
+            for nome in usuarios:
+                self.lista_usuarios.insert(tk.END, nome)
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao listar usuários: {str(e)}")
+
+    def remover_usuario_selecionado(self):
+        selecao = self.lista_usuarios.curselection()
+        if not selecao:
+            messagebox.showwarning("Aviso", "Selecione um usuário para remover.")
+            return
+
+        nome = self.lista_usuarios.get(selecao[0])
+        try:
+            remover_usuario(nome)
+            messagebox.showinfo("Remover", f"Usuário '{nome}' removido com sucesso.")
+            self.atualizar_lista_usuarios()
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao remover usuário: {str(e)}")
+
+# Serviço
+from flask import Flask, request
+from user import atualizar_gastos
+
+app = Flask(__name__)
+
+@app.route("/pay_user", methods=["POST"])
+def receber_pagamento_usuario():
+    data = request.get_json()
+    if not data:
+        return "Dados JSON não enviados!", 400
+
+    nome = data.get("nome")
+    valor = data.get("valor")
+
+    if not nome or valor is None:
+        return "Nome e valor são obrigatórios!", 400
+
+    try:
+        atualizar_gastos(nome, float(valor))
+        print(f"Gasto de R$ {valor:.2f} registrado para {nome}")
+        return "Gasto atualizado com sucesso!", 200
+    except Exception as e:
+        return f"Erro ao atualizar gasto: {str(e)}", 500

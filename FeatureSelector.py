@@ -45,11 +45,6 @@ FEATURES = {
                 "description": "User profile",
                 "required": False,
             },
-            "inventory": {
-                "name": "Inventory Service",
-                "description": "Stock management",
-                "required": False,
-            },
         },
     },
 }

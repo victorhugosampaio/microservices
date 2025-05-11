@@ -2,21 +2,21 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
-import os
 import requests
 from io import BytesIO
+import numpy as np
 
 # Tabela querry
-(id INT PRIMARY KEY,nome VARCHAR(255),descricao TEXT,foto VARCHAR(255),preco DECIMAL(7, 2))
+(id INT PRIMARY KEY,nome VARCHAR(255),descricao TEXT,foto VARCHAR(500),preco DECIMAL(7, 2),tipo VARCHAR(50))
 
 # Código próprio
-def adicionar_produto(id, nome, descricao, preco, foto):
+def adicionar_produto(id, nome, descricao, preco, foto, tipo):
     db = connect_catalog()
     cursor = db.cursor()
     cursor.execute("""
-        INSERT INTO catalog (id, nome, descricao, foto, preco)
-        VALUES (%s, %s, %s, %s, %s)
-    """, (id, nome, descricao, foto, preco))
+        INSERT INTO catalog (id, nome, descricao, foto, preco, tipo)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (id, nome, descricao, foto, preco, tipo))
     db.commit()
     db.close()
 
@@ -28,13 +28,14 @@ def listar_produtos():
     db.close()
     return produtos
 
-def editar_produto(id, nome, descricao, preco, foto):
+def editar_produto(id, nome, descricao, preco, foto, tipo):
     db = connect_catalog()
     cursor = db.cursor()
     cursor.execute("""
-        UPDATE catalog SET nome=%s, descricao=%s, foto=%s, preco=%s
+        UPDATE catalog
+        SET nome=%s, descricao=%s, foto=%s, preco=%s, tipo=%s
         WHERE id=%s
-    """, (nome, descricao, foto, preco, id))
+    """, (nome, descricao, foto, preco, tipo, id))
     db.commit()
     db.close()
 
@@ -44,6 +45,146 @@ def remover_produto(id):
     cursor.execute("DELETE FROM catalog WHERE id=%s", (id,))
     db.commit()
     db.close()
+
+def analisar_itens_mais_populares():
+    try:
+        response = requests.get("http://localhost:{cart_port}/totais")
+        if response.status_code != 200:
+            return f"Erro ao obter totais: código {response.status_code}"
+
+        totais_str = response.text.strip()
+        totais = {}
+        for item in totais_str.split(","):
+            if ":" not in item:
+                continue
+            prod_id, qtd = item.split(":")
+            totais[int(prod_id)] = int(qtd)
+
+        db = connect_catalog()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, tipo FROM catalog")
+        produtos_categoria = cursor.fetchall()
+        db.close()
+
+        categoria_map = {}
+        for prod_id, categoria in produtos_categoria:
+            if prod_id in totais:
+                if categoria not in categoria_map:
+                    categoria_map[categoria] = (prod_id, totais[prod_id])
+                else:
+                    atual_id, atual_qtd = categoria_map[categoria]
+                    if totais[prod_id] > atual_qtd:
+                        categoria_map[categoria] = (prod_id, totais[prod_id])
+
+        resultado = ",".join(f"{prod_id}:{qtd}" for _, (prod_id, qtd) in categoria_map.items())
+        return resultado
+
+    except Exception as e:
+        return f"Erro na análise: {e}"
+
+def get_produtos_por_categoria():
+    try:
+        db = connect_catalog()
+        cursor = db.cursor()
+        cursor.execute("SELECT nome, tipo FROM catalog")
+        rows = cursor.fetchall()
+        db.close()
+        categorias = {}
+        for nome, categoria in rows:
+            if categoria not in categorias:
+                categorias[categoria] = []
+            categorias[categoria].append(nome)
+        return categorias
+    except Exception as e:
+        return {}
+
+def encode_purchase_history(user_purchase_history, product_categories):
+    all_products = [product for products in product_categories.values() for product in products]
+    encoded_history = np.zeros(len(all_products))
+    for product in user_purchase_history:
+        if product in all_products:
+            encoded_history[all_products.index(product)] = 1
+    return encoded_history, all_products
+
+def create_neural_network(input_size, hidden_size, output_size):
+    np.random.seed(0)
+    W1 = np.random.randn(input_size, hidden_size)
+    b1 = np.zeros(hidden_size)
+    W2 = np.random.randn(hidden_size, output_size)
+    b2 = np.zeros(output_size)
+    return W1, b1, W2, b2
+
+def relu(x):
+    return np.maximum(0, x)
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def forward_propagation(X, W1, b1, W2, b2):
+    Z1 = np.dot(X, W1) + b1
+    A1 = relu(Z1)
+    Z2 = np.dot(A1, W2) + b2
+    A2 = sigmoid(Z2)
+    return A2
+
+def recommend_products():
+    populares_str = analisar_itens_mais_populares()
+    if "Erro" in populares_str or not populares_str.strip():
+        return []
+
+    try:
+        mais_comprados = {}
+        for item in populares_str.split(","):
+            if ":" in item:
+                pid, qtd = item.split(":")
+                mais_comprados[int(pid)] = int(qtd)
+
+        db = connect_catalog()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, nome, tipo FROM catalog")
+        rows = cursor.fetchall()
+        db.close()
+
+        id_para_nome = {}
+        nome_para_id = {}
+        categoria_para_produtos = {}
+
+        for pid, nome, categoria in rows:
+            id_para_nome[pid] = nome
+            nome_para_id[nome] = pid
+            if categoria not in categoria_para_produtos:
+                categoria_para_produtos[categoria] = []
+            categoria_para_produtos[categoria].append(nome)
+
+        nomes_mais_comprados = [id_para_nome[pid] for pid in mais_comprados if pid in id_para_nome]
+
+        encoded_history, all_products = encode_purchase_history(nomes_mais_comprados, categoria_para_produtos)
+
+        input_size = len(encoded_history)
+        hidden_size = 10
+        output_size = len(encoded_history)
+
+        W1, b1, W2, b2 = create_neural_network(input_size, hidden_size, output_size)
+        recommendations_encoded = forward_propagation(encoded_history, W1, b1, W2, b2)
+
+        candidatos = [
+            all_products[i]
+            for i in range(len(all_products))
+            if recommendations_encoded[i] > 0.5 and all_products[i] not in nomes_mais_comprados
+        ]
+
+        recomendacoes_por_categoria = {}
+        for nome in candidatos:
+            for categoria, produtos in categoria_para_produtos.items():
+                if nome in produtos and categoria not in recomendacoes_por_categoria:
+                    recomendacoes_por_categoria[categoria] = nome
+                    break
+
+        return list(recomendacoes_por_categoria.values())
+
+    except Exception as e:
+        return [f"Erro: {e}"]
+
 
 class catalog_app:
     def __init__(self, root):
@@ -90,6 +231,9 @@ class catalog_app:
         self.qtd_envio.grid(row=3, column=1, sticky="w", padx=10)
         self.qtd_envio.grid_remove()
 
+        self.label_recomendados = ttk.Label(self.frame_catalogo, text="Produtos Recomendados: ", wraplength=400, justify="left")
+        self.label_recomendados.grid(row=5, column=0, padx=10, sticky="w")
+
         ttk.Button(self.frame_catalogo, text="Enviar Itens para o Carrinho", command=self.enviar_para_carrinho).grid(row=6, column=0, pady=10, sticky="w")
 
         ttk.Label(self.frame_adicionar, text="ID").grid(row=0, column=0, sticky="w")
@@ -108,11 +252,15 @@ class catalog_app:
         self.preco_add = ttk.Entry(self.frame_adicionar)
         self.preco_add.grid(row=3, column=1)
 
-        ttk.Label(self.frame_adicionar, text="URL da Imagem").grid(row=4, column=0, sticky="w")
-        self.url_add = ttk.Entry(self.frame_adicionar)
-        self.url_add.grid(row=4, column=1)
+        ttk.Label(self.frame_adicionar, text="Tipo").grid(row=4, column=0, sticky="w")
+        self.tipo_add = ttk.Entry(self.frame_adicionar)
+        self.tipo_add.grid(row=4, column=1)
 
-        ttk.Button(self.frame_adicionar, text="Adicionar", command=self.adicionar_produto).grid(row=5, column=0, columnspan=2, sticky="w")
+        ttk.Label(self.frame_adicionar, text="URL da Imagem").grid(row=5, column=0, sticky="w")
+        self.url_add = ttk.Entry(self.frame_adicionar)
+        self.url_add.grid(row=5, column=1)
+
+        ttk.Button(self.frame_adicionar, text="Adicionar", command=self.adicionar_produto).grid(row=6, column=0, columnspan=2, sticky="w")
 
         self.lista_editar = tk.Listbox(self.frame_editar, width=50)
         self.lista_editar.grid(row=0, column=0, columnspan=2)
@@ -130,11 +278,15 @@ class catalog_app:
         self.preco_edit = ttk.Entry(self.frame_editar)
         self.preco_edit.grid(row=3, column=1)
 
-        ttk.Label(self.frame_editar, text="URL da Imagem").grid(row=4, column=0, sticky="w")
-        self.url_edit = ttk.Entry(self.frame_editar)
-        self.url_edit.grid(row=4, column=1)
+        ttk.Label(self.frame_editar, text="Tipo").grid(row=4, column=0, sticky="w")
+        self.tipo_edit = ttk.Entry(self.frame_editar)
+        self.tipo_edit.grid(row=4, column=1)
 
-        ttk.Button(self.frame_editar, text="Salvar Alterações", command=self.salvar_edicao).grid(row=5, column=0, columnspan=2, sticky="w")
+        ttk.Label(self.frame_editar, text="URL da Imagem").grid(row=5, column=0, sticky="w")
+        self.url_edit = ttk.Entry(self.frame_editar)
+        self.url_edit.grid(row=5, column=1)
+
+        ttk.Button(self.frame_editar, text="Salvar Alterações", command=self.salvar_edicao).grid(row=6, column=0, columnspan=2, sticky="w")
 
         self.lista_remover = tk.Listbox(self.frame_remover, width=50)
         self.lista_remover.grid(row=0, column=0)
@@ -148,9 +300,10 @@ class catalog_app:
             descricao = self.desc_add.get()
             preco = float(self.preco_add.get())
             foto_url = self.url_add.get()
-            if nome and descricao and foto_url:
+            tipo = self.tipo_add.get()
+            if nome and descricao and tipo and foto_url:
                 self.foto_add = foto_url
-                adicionar_produto(id, nome, descricao, preco, self.foto_add)
+                adicionar_produto(id, nome, descricao, preco, self.foto_add, tipo)
                 self.listar_produtos()
                 messagebox.showinfo("Sucesso", "Produto adicionado")
         except Exception as e:
@@ -167,6 +320,10 @@ class catalog_app:
             self.lista_catalogo.insert(tk.END, p[1])
             self.lista_editar.insert(tk.END, p[1])
             self.lista_remover.insert(tk.END, p[1])
+
+        nomes_recomendados = ", ".join(recommend_products())
+        self.label_recomendados.config(text=f"Produtos Recomendados: {nomes_recomendados}")
+
 
     def exibir_produto(self, event):
         try:
@@ -254,6 +411,8 @@ class catalog_app:
             self.desc_edit.insert(0, produto[2])
             self.preco_edit.delete(0, tk.END)
             self.preco_edit.insert(0, produto[4])
+            self.tipo_edit.delete(0, tk.END)
+            self.tipo_edit.insert(0, produto[5])
             self.url_edit.delete(0, tk.END)
             self.url_edit.insert(0, produto[3])
         except Exception as e:
@@ -265,7 +424,8 @@ class catalog_app:
             descricao = self.desc_edit.get()
             preco = float(self.preco_edit.get())
             foto_url = self.url_edit.get()
-            editar_produto(self.selected_id, nome, descricao, preco, foto_url)
+            tipo = self.tipo_edit.get()
+            editar_produto(self.selected_id, nome, descricao, preco, foto_url, tipo)
             self.listar_produtos()
             messagebox.showinfo("Sucesso", "Produto editado com sucesso!")
         except Exception as e:
@@ -294,12 +454,14 @@ class catalog_app:
             self.nome_add.delete(0, tk.END)
             self.desc_add.delete(0, tk.END)
             self.preco_add.delete(0, tk.END)
+            self.tipo_add.delete(0, tk.END)
             self.url_add.delete(0, tk.END)
             self.foto_add = ""
         elif self.notebook.index(self.notebook.select()) == 2:
             self.nome_edit.delete(0, tk.END)
             self.desc_edit.delete(0, tk.END)
             self.preco_edit.delete(0, tk.END)
+            self.tipo_edit.delete(0, tk.END)
             self.url_edit.delete(0, tk.END)
             self.foto_edit = ""
         elif self.notebook.index(self.notebook.select()) == 3:

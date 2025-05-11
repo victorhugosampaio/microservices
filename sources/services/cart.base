@@ -205,3 +205,35 @@ def save_cart():
         print(f"RECEBIDO {produtos}")
         return "Carrinho atualizado com sucesso!", 200
     return None
+
+@app.route("/totais", methods=["GET"])
+def calcular_totais():
+    try:
+        db = connect_cart()
+        cursor = db.cursor()
+        cursor.execute("SELECT itens FROM cart")
+        resultados = cursor.fetchall()
+        db.close()
+
+        totais = {}
+
+        for (linha,) in resultados:
+            itens = linha.strip().split(",")
+            for item in itens:
+                if ":" not in item:
+                    continue
+                prod_id, qtd = item.split(":")
+                prod_id = int(prod_id.strip())
+                qtd = int(qtd.strip())
+
+                if prod_id in totais:
+                    totais[prod_id] += qtd
+                else:
+                    totais[prod_id] = qtd
+
+        totais_str = ",".join(f"{k}:{v}" for k, v in totais.items())
+        print(f"Enviado: ", totais_str)
+        return totais_str, 200
+
+    except Exception as e:
+        return f"Erro ao calcular totais: {str(e)}", 500
